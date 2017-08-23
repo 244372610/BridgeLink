@@ -1,0 +1,128 @@
+package com.orient.task;
+
+import com.orient.util.ConfigInfo;
+import com.orient.util.LoginInfo;
+import net.sf.json.JSONArray;
+import net.sf.json.JSONObject;
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.config.CookieSpecs;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
+import org.apache.log4j.Logger;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.util.*;
+
+
+/**
+ * Created by sunweipeng on 2017/7/20.
+ */
+@Component("loalDataToFile")
+public class LoadDataToFile {
+
+    private Logger log = Logger.getLogger(LoadDataToFile.class);
+
+    public void runTask() throws IOException {
+        //一共多少条数据
+        int totalCount = getTotalNum(ConfigInfo.LoadDataURL);
+        log.info("一共需要读取 " + totalCount + " 条记录");
+        this.loadData(0, totalCount);
+    }
+
+    @Transactional
+    private void loadData(int areadyRead, int totalCount) throws IOException {
+        //一共有多少页
+        int endPageIndex = totalCount / ConfigInfo.PAGESIZE + (totalCount % ConfigInfo.PAGESIZE == 0 ? 0 : 1);
+        //这次从多少页开始读取
+        int startPageIndex = areadyRead / ConfigInfo.PAGESIZE + 1;
+        //从当页的多少条记录开始读取
+        int dataIndex = areadyRead % ConfigInfo.PAGESIZE;
+        Map<String, String> params = new HashMap<>();
+        PrintWriter writer = new PrintWriter(new FileWriter("/Users/sunweipeng/Desktop/data1.json",true));
+        for (int i = startPageIndex; i <= endPageIndex; i++) {
+            params.put("pageIndex", String.valueOf(i));
+            for(JSONObject json :getData(ConfigInfo.LoadDataURL, params)){
+                writer.println(json.getString("casecontent"));
+                writer.println("################################");
+            }
+        }
+        writer.close();
+    }
+
+
+
+
+    /**
+     * 得到12345系统中一共有多少条记录
+     * @return
+     * @throws IOException
+     */
+    private int getTotalNum(String url) throws IOException {
+        HttpResponse response = getResponse(url);
+        if(200!=response.getStatusLine().getStatusCode()){ //如果返回302说明发生了重定向，表明登录信息失效需要重新进行登录
+            log.error("在获取数据列表的过程中用户信息丢失");
+        }
+        HttpEntity entity = response.getEntity();
+        String ret = EntityUtils.toString(entity,"GBK");
+        JSONObject jsonObject = JSONObject.fromObject(ret);
+        String records = jsonObject.getString("records");
+        return Integer.valueOf(records);
+    }
+
+
+    public List<JSONObject> getData(String baseUrl, Map params) throws IOException {
+        HttpResponse response = getResponse(baseUrl,params);
+        if(200!=response.getStatusLine().getStatusCode()){ //如果返回302说明发生了重定向，表明登录信息失效需要重新进行登录
+            log.error("在获取数据列表的过程中用户信息丢失");
+        }
+        HttpEntity entity = response.getEntity();
+        String ret = EntityUtils.toString(entity,"UTF-8");
+        ret = new String(ret.getBytes("UTF-8"),"UTF-8");
+        JSONObject jsonObject = JSONObject.fromObject(ret);
+        JSONArray jsonArray = (JSONArray) jsonObject.get("rows");
+        List<JSONObject> list = new ArrayList<>();
+        for(int i=0;i<jsonArray.size();i++) {
+            list.add(jsonArray.getJSONObject(i));
+        }
+        return list;
+    }
+
+    public HttpResponse getResponse(String url) throws IOException {
+       return getResponse(url,new HashMap<String,String>());
+    }
+
+    public HttpResponse getResponse(String baseUrl,Map<String,String> params) throws IOException {
+        String url = baseUrl;
+        StringBuilder sb = new StringBuilder(baseUrl);
+        if(params.size()>0) {
+            if(sb.indexOf("?")==-1) {
+                sb.append("?");
+                for(String key:params.keySet()) {
+                    sb.append(key).append("=").append(params.get(key)).append("&");
+                }
+                url = sb.substring(0, sb.lastIndexOf("&"));
+            }else {
+                for(String key:params.keySet()) {
+                    sb.append("&").append(key).append("=").append(params.get(key));
+                }
+                url = sb.toString();
+            }
+
+        }
+
+        log.info("请求URL为："+ url);
+        HttpPost post = new HttpPost(url);
+        RequestConfig requestConfig = RequestConfig.custom().setCookieSpec(CookieSpecs.DEFAULT).build();//标准Cookie策略
+        CloseableHttpClient client = HttpClients.custom().setDefaultRequestConfig(requestConfig).setDefaultCookieStore(LoginInfo.getPollDataInstance().getCookieStore()).build();
+        HttpResponse response = client.execute(post);
+        return response;
+    }
+}
